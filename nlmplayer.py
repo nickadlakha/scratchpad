@@ -22,22 +22,39 @@ import alsaaudio
 import audiotools.text as aerr
 import threading
 import termios
+import os
+import select
+from fcntl import fcntl, F_GETFL, F_SETFL
+from signal import signal, pthread_kill, SIGALRM
 
 iloop = 1
+oloop = 1
+cframes = 0
 wthrd = ""
 
 if sys.argv.__len__() <= 1:
     print("Usage: %s [audio_file]" % sys.argv[0])
     sys.exit(1)
 
+def signal_handler(signum, frame):
+    pass
+
+signal(SIGALRM, signal_handler)
+
 try:
     afile = audiotools.open(sys.argv[1])
+
     msg = audiotools.Messenger()
+
+    pgrs = audiotools.SingleProgressDisplay(msg, "[keypress]: j to jump 10 seconds forward, q to quit")
+
+    sframes = afile.total_frames()
 
     aformat = alsaaudio.PCM_FORMAT_S16_LE if sys.byteorder == 'little' else alsaaudio.PCM_FORMAT_S16_BE
 
-    if afile.supports_to_pcm():
+    lock = threading.Lock()
 
+    if afile.supports_to_pcm():
         apcm = alsaaudio.PCM(type=alsaaudio.PCM_PLAYBACK, mode=alsaaudio.PCM_NORMAL)
         apcm.setformat(aformat)
         apcm.setrate(afile.sample_rate())
@@ -47,56 +64,91 @@ try:
         i)  Default periodsize is 32 frames per second.
         ii) frame size = sample size in bits * no of channels
                 example: 16 * 2 = 32 bits/ 8 = 4 bytes
-        iii) to avoid jitter we have used 256 frames as periodsize, kernel will maintain internal buffer          
+        iii) to avoid jitter we have used 512 frames as periodsize, kernel will maintain internal buffer          
         """
 
-        apcm.setperiodsize(256)
+        apcm.setperiodsize(512)
         pcmr = afile.to_pcm()
 
         def thread_callback():
+            try:
+                stdin_fd = sys.stdin.fileno()
+                oldaddr = termios.tcgetattr(stdin_fd)
+                newattr = oldaddr
+                newattr[3] = newattr[3] & ~termios.ICANON
+                newattr[3] = newattr[3] & ~termios.ECHO
 
-            oldaddr = termios.tcgetattr(sys.stdin.fileno())
-            newattr = oldaddr
-            newattr[3] = newattr[3] & ~termios.ICANON
-            newattr[3] = newattr[3] & ~termios.ECHO
+                termios.tcsetattr(stdin_fd, termios.TCSANOW, newattr)
+                oldflags = fcntl(stdin_fd, F_GETFL)
+                fcntl(stdin_fd, F_SETFL, oldflags|os.O_NONBLOCK)
 
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, newattr)
+                global iloop
+                global oloop
+                global cframes
+                cframelist = ''
+                ch = ''
 
-            global iloop
+                while iloop:
+                    (r, w, er) = select.select([0], [], [])
 
-            while iloop:
-                ch = sys.stdin.read(1)
-                if (ch == 'j'):
-                    istop = afile.sample_rate() * 10
-                    i = 0
+                    if (r):
+                        ch = sys.stdin.read(1)
 
-                    while i < istop:
-                        if pcmr.read(256):
-                            i += 256
-                        else:
-                            iloop = 0
-                            break
-            oldaddr[3] = oldaddr[3] | termios.ECHO
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSAFLUSH, oldaddr)
+                    if (ch == 'j'):
+                        istop = afile.sample_rate() * 10
+                        i = 0
+
+                        lock.acquire()
+                        cframes += istop
+                        lock.release()
+
+                        while i < istop:
+                            cframelist =  pcmr.read(512)
+
+                            if cframelist:
+                                i += cframelist.frames
+                            else:
+                                iloop = 0
+                                break
+                    elif (ch == 'q'):
+                        oloop = 0
+                        break
+
+            except InterruptedError:
+                pass
+
+            finally:
+                fcntl(stdin_fd, F_SETFL, oldflags)
+                oldaddr[3] = oldaddr[3] | termios.ECHO
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSAFLUSH, oldaddr)
      
         wthrd = threading.Thread(target=thread_callback)
+        wthrd.daemon = True
         wthrd.start()
 
         if afile.supports_metadata():
-            msg.info(unicode(afile.get_metadata()))
+            msg.info(afile.get_metadata().__unicode__())
 
-        while 1:
-            buf = pcmr.read(256).to_bytes(False, True)
-            if not len(buf):
+        fbuf = ""
+        bbuf = ""
+
+        while oloop:
+            fbuf = pcmr.read(512)
+            bbuf = fbuf.to_bytes(False, True)
+
+            lock.acquire()
+            cframes += fbuf.frames
+            lock.release()
+
+            if not len(bbuf):
                 break
 
-            apcm.write(buf)
+            apcm.write(bbuf)
+            pgrs.update(cframes / sframes)
 
         pcmr.close()
         apcm.close()
-        iloop = 0
-        if wthrd:
-            wthrd.join()
+
     else:
         msg.warning(aerr.ERR_UNSUPPORTED_TO_PCM % {"filename" : sys.argv[1], "type" : afile.NAME})
 
@@ -107,6 +159,10 @@ except audiotools.InvalidFile as e:
 except IOError as e:
     msg.warning(e)
 except KeyboardInterrupt:
-    iloop = 0
     pcmr.close()
     apcm.close()
+finally:
+    iloop = 0
+
+    if wthrd and wthrd.is_alive():
+        pthread_kill(wthrd.ident, SIGALRM)
