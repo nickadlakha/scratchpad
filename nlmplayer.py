@@ -41,30 +41,30 @@ def signal_handler(signum, frame):
 
 signal(SIGALRM, signal_handler)
 
+msg = audiotools.Messenger()
+
 try:
     afile = audiotools.open(sys.argv[1])
-
-    msg = audiotools.Messenger()
-
-    pgrs = audiotools.SingleProgressDisplay(msg, "[keypress]: j to jump 10 seconds forward, q to quit")
-
+    pgrs = audiotools.SingleProgressDisplay(msg, "[keypress]: j to jump 10"
+                                                 "seconds forward, q to quit")
     sframes = afile.total_frames()
-
-    aformat = alsaaudio.PCM_FORMAT_S16_LE if sys.byteorder == 'little' else alsaaudio.PCM_FORMAT_S16_BE
-
+    aformat = alsaaudio.PCM_FORMAT_S16_LE if sys.byteorder == 'little' else \
+        alsaaudio.PCM_FORMAT_S16_BE
     lock = threading.Lock()
 
     if afile.supports_to_pcm():
-        apcm = alsaaudio.PCM(type=alsaaudio.PCM_PLAYBACK, mode=alsaaudio.PCM_NORMAL)
+        apcm = alsaaudio.PCM(type=alsaaudio.PCM_PLAYBACK,
+                             mode=alsaaudio.PCM_NORMAL)
         apcm.setformat(aformat)
         apcm.setrate(afile.sample_rate())
         apcm.setchannels(afile.channels())
 
         """
-        i)  Default periodsize is 32 frames per second.
-        ii) frame size = sample size in bits * no of channels
-                example: 16 * 2 = 32 bits/ 8 = 4 bytes
-        iii) to avoid jitter we have used 512 frames as periodsize, kernel will maintain internal buffer          
+        i)   Default periodsize is 32 frames per second.
+        ii)  frame size = sample size in bits * no of channels
+             example: 16 * 2 = 32 bits/ 8 = 4 bytes
+        iii) to avoid jitter we have used 512 frames as periodsize, 
+             kernel will maintain internal buffer          
         """
 
         apcm.setperiodsize(512)
@@ -120,10 +120,9 @@ try:
             finally:
                 fcntl(stdin_fd, F_SETFL, oldflags)
                 oldaddr[3] = oldaddr[3] | termios.ECHO
-                termios.tcsetattr(sys.stdin.fileno(), termios.TCSAFLUSH, oldaddr)
+                termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, oldaddr)
      
         wthrd = threading.Thread(target=thread_callback)
-        wthrd.daemon = True
         wthrd.start()
 
         if afile.supports_metadata():
@@ -150,7 +149,8 @@ try:
         apcm.close()
 
     else:
-        msg.warning(aerr.ERR_UNSUPPORTED_TO_PCM % {"filename" : sys.argv[1], "type" : afile.NAME})
+        msg.warning(aerr.ERR_UNSUPPORTED_TO_PCM % {"filename" : sys.argv[1],
+                                                   "type" : afile.NAME})
 
 except audiotools.UnsupportedFile:
     msg.warning(aerr.ERR_UNSUPPORTED_FILE % sys.argv[1])
