@@ -45,8 +45,15 @@ msg = audiotools.Messenger()
 
 try:
     afile = audiotools.open(sys.argv[1])
-    pgrs = audiotools.SingleProgressDisplay(msg, "[keypress]: j to jump 10"
-                                                 "seconds forward, q to quit")
+    mixer = alsaaudio.Mixer()
+    cvol = mixer.getvolume()[0]
+
+    dtemplate = "[keypress]: j to jump 10 seconds forward, q to quit, " \
+                "v to increase the vol by 10%%, d to decrease the vol by " \
+                "10%%, " \
+                "current vol gain [%s]%%"
+    pgrs = audiotools.SingleProgressDisplay(msg, dtemplate % cvol)
+
     sframes = afile.total_frames()
     aformat = alsaaudio.PCM_FORMAT_S16_LE if sys.byteorder == 'little' else \
         alsaaudio.PCM_FORMAT_S16_BE
@@ -82,9 +89,12 @@ try:
                 oldflags = fcntl(stdin_fd, F_GETFL)
                 fcntl(stdin_fd, F_SETFL, oldflags|os.O_NONBLOCK)
 
+                mixer = alsaaudio.Mixer()
+
                 global iloop
                 global oloop
                 global cframes
+                global cvol
                 cframelist = ''
                 ch = ''
 
@@ -110,9 +120,22 @@ try:
                             else:
                                 iloop = 0
                                 break
+
                     elif (ch == 'q'):
                         oloop = 0
                         break
+
+                    elif (ch == 'v'):
+                        cvol = 100 if ((cvol + 10) > 100) else (cvol + 10)
+
+                        mixer.setvolume(cvol)
+                        pgrs.row.output_line = dtemplate % cvol
+
+                    elif (ch == 'd'):
+                        cvol = 0 if ((cvol - 10) < 0) else (cvol - 10)
+
+                        mixer.setvolume(cvol)
+                        pgrs.row.output_line = dtemplate % cvol
 
             except InterruptedError:
                 pass
