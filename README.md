@@ -7,7 +7,7 @@
 * `cd` audiotools
 * `export CFLAGS="-DPY_SSIZE_T_CLEAN"`
 * `python3 setup.py build`
-* `python setup.py install`
+* `python3 setup.py install`
 * `pip3 install pyalsaaudio`
 
 ## Running ##
